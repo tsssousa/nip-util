@@ -4,9 +4,11 @@
 # Variáveis de Configuração
 # ==========================================
 BASE_DIR="/hd/monitor"
+DEST_DIR="/hd/log/icmp-test/gravacao" # <-- Pasta de destino física no servidor
+URL_BASE_PATH="/icmp-test/gravacao"   # <-- Caminho base para a URL web
 
 echo "========================================"
-echo "       BUSCA DE GRAVAÇÕES"
+echo "       BUSCA E EXPORTAÇÃO DE GRAVAÇÕES"
 echo "========================================"
 
 # 1. Pede o número (pode ser o telefone do cliente ou um ramal)
@@ -41,12 +43,38 @@ arquivos=$(find "$SEARCH_DIR" -type f -iname "*${numero}*.wav" 2>/dev/null)
 if [ -z "$arquivos" ]; then
     echo "[-] Nenhuma gravação encontrada para o número: $numero"
 else
-    echo "[!] Gravações encontradas:"
+    echo "[!] Gravações encontradas!"
     
-    # Lê a lista de arquivos e formata a saída mostrando o tamanho
+    # Cria o diretório de destino uma única vez
+    echo "[+] Preparando pasta de destino: $DEST_DIR"
+    mkdir -p "$DEST_DIR"
+    
+    # Lê a lista de arquivos, mostra na tela e realiza a cópia
     echo "$arquivos" | while read -r arquivo; do
         tamanho=$(du -h "$arquivo" | awk '{print $1}')
-        echo " -> $arquivo (Tamanho: $tamanho)"
+        
+        # Faz a cópia do arquivo para o destino
+        cp "$arquivo" "$DEST_DIR/"
+        
+        # Mostra na tela o que está acontecendo
+        echo " -> Copiado: $arquivo ($tamanho)"
     done
+    
+    # ==========================================
+    # 4. Geração do Link de Acesso Web
+    # ==========================================
+    echo -e "\n[+] Obtendo IP externo para gerar o link..."
+    # O '-s' deixa o curl silencioso (sem mostrar barra de progresso)
+    EXTERNAL_IP=$(curl -s ipinfo.io/ip)
+    
+    # Prevenção: caso o servidor esteja sem internet ou o curl falhe
+    if [ -z "$EXTERNAL_IP" ]; then
+        EXTERNAL_IP="SEU_IP"
+    fi
+    
+    LINK_WEB="https://${EXTERNAL_IP}:4443${URL_BASE_PATH}"
+    
+    echo -e "[+] Concluído! Todos os arquivos foram enviados para: $DEST_DIR"
+    echo -e "[+] Acesse as gravações pelo navegador no link abaixo:"
+    echo -e "\n    -> $LINK_WEB\n"
 fi
-echo ""
