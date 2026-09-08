@@ -18,7 +18,7 @@ mkdir -p "$DIR_LOG"
 trap 'rm -rf "$DIR_TMP"; echo -e "\n\nMonitoramento encerrado."; exit 0' INT TERM
 
 # ==========================================
-# DEFINIÇÃO DO MODO DE FILTRO (VIA PARÂMETRO)
+# DEFINIÇÃO DO MODO DE FILTRO
 # ==========================================
 case "$OPCAO" in
     1|"CRITICO")
@@ -31,7 +31,7 @@ case "$OPCAO" in
         ;;
     3|"TUDO"|"HARDCORE")
         MODE="TUDO"
-        echo -e "-> Foco definido: Monitoramento Completo (Gera mais logs)."
+        echo -e "-> Foco definido: Monitoramento Completo (Gera mais logs, tolerância de 20ms)."
         ;;
     *)
         MODE="CRITICO"
@@ -39,12 +39,10 @@ case "$OPCAO" in
         ;;
 esac
 
-# Função para definir o nome do arquivo baseado na hora atual (ex: registro_2026-06-10_13h.txt)
 atualizar_arquivo_log() {
     ARQUIVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d_%Hh').txt"
 }
 
-# Inicializa o primeiro arquivo de log
 atualizar_arquivo_log
 
 echo "----------------------------------------------------------"
@@ -65,9 +63,7 @@ echo "========================================" >> "$ARQUIVO_LOG"
 echo "$MSG_INICIAL" >> "$ARQUIVO_LOG"
 
 while sleep "$INTERVALO"; do
-    # RECALCULA O NOME DO ARQUIVO: Se mudou a hora no sistema, o script passa a gravar no arquivo novo automaticamente
     atualizar_arquivo_log
-
     get_peers > "$ATUAL"
 
     MUDANCAS=$(awk -v data_hora="$(date '+%Y-%m-%d %H:%M:%S')" -v modo="$MODE" '
@@ -77,36 +73,38 @@ while sleep "$INTERVALO"; do
         dados["status"] = "UNKNOWN"
         dados["ms"] = "0"
 
-        split(linha, partes, " ")
+        n = split(linha, partes, " ")
+        
+        # O nome do peer no Asterisk costuma ser o campo 1
         dados["peer"] = partes[1]
 
-        if (linha ~ /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/) {
-            match(linha, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)
+        # 1. Extrai IP exato via Regex
+        if (match(linha, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)) {
             dados["ip"] = substr(linha, RSTART, RLENGTH)
-
-            if (match(linha, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+ [0-9]+/)) {
-                split(substr(linha, RSTART, RLENGTH), ip_p, " ")
-                dados["porta"] = ip_p[2]
-            }
         }
 
-        # Isola o status macro (OK, UNREACHABLE, etc) e extrai o ms de forma limpa
-        if (linha ~ / UNREACHABLE /) dados["status"] = "UNREACHABLE"
-        else if (linha ~ / UNKNOWN /) dados["status"] = "UNKNOWN"
-        else if (linha ~ / OK /) {
-            dados["status"] = "OK"
-            if (match(linha, /\([0-9]+ ms\)/)) {
-                substring = substr(linha, RSTART, RLENGTH)
-                gsub(/[^0-9]/, "", substring)
-                dados["ms"] = substring
-            }
+        # 2. Extrai Status
+        if (linha ~ / UNREACHABLE/) dados["status"] = "UNREACHABLE"
+        else if (linha ~ / UNKNOWN/) dados["status"] = "UNKNOWN"
+        else if (linha ~ / OK/) dados["status"] = "OK"
+        else if (linha ~ / LAGGED/) dados["status"] = "LAGGED"
+        else if (linha ~ / REJECTED/) dados["status"] = "REJECTED"
+
+        # 3. Extrai Latência Limpa
+        if (match(linha, /\([0-9]+ ms\)/)) {
+            substring = substr(linha, RSTART, RLENGTH)
+            gsub(/[^0-9]/, "", substring)
+            dados["ms"] = substring
         }
-        else if (linha ~ / LAGGED /) {
-            dados["status"] = "LAGGED"
-            if (match(linha, /\([0-9]+ ms\)/)) {
-                substring = substr(linha, RSTART, RLENGTH)
-                gsub(/[^0-9]/, "", substring)
-                dados["ms"] = substring
+
+        # 4. Extrai Porta (MUITO MAIS PRECISO)
+        # Na saída do Asterisk, a porta é sempre a coluna anterior ao Status
+        for (i = 1; i <= n; i++) {
+            if (partes[i] ~ /^(OK|UNREACHABLE|UNKNOWN|LAGGED|REJECTED)/) {
+                if (i > 1 && partes[i-1] ~ /^[0-9]+$/) {
+                    dados["porta"] = partes[i-1]
+                }
+                break
             }
         }
     }
@@ -134,12 +132,13 @@ while sleep "$INTERVALO"; do
             mudou = 0
             motivo = ""
 
-            # Validação baseada no modo escolhido
+            # Critico: Mudança de Status
             if (status_ant[peer] != atu["status"]) {
                 motivo = motivo "    - Status alterado de [" status_ant[peer] "] para [" atu["status"] "]\n"
                 mudou = 1
             }
 
+            # Rede: IP ou Porta
             if (modo == "REDE" || modo == "TUDO") {
                 if (ip_ant[peer] != atu["ip"]) {
                     motivo = motivo "    - IP alterado de [" ip_ant[peer] "] para [" atu["ip"] "]\n"
@@ -151,9 +150,14 @@ while sleep "$INTERVALO"; do
                 }
             }
 
+            # Tudo: Variações bruscas de Latência
             if (modo == "TUDO") {
-                if (ms_ant[peer] != atu["ms"] && status_ant[peer] == "OK" && atu["status"] == "OK") {
-                    motivo = motivo "    - Latência variou de [" ms_ant[peer] "ms] para [" atu["ms"] "ms]\n"
+                diff = atu["ms"] - ms_ant[peer]
+                if (diff < 0) diff = -diff
+                
+                # Tolerância de 20ms para evitar logs de oscilação normal (jitter)
+                if (diff >= 20 && status_ant[peer] == "OK" && atu["status"] == "OK") {
+                    motivo = motivo "    - Latência variou drasticamente de [" ms_ant[peer] "ms] para [" atu["ms"] "ms]\n"
                     mudou = 1
                 }
             }
@@ -168,7 +172,6 @@ while sleep "$INTERVALO"; do
         }
     }
     END {
-        # Qualquer remoção/queda total entra em qualquer modo por ser Crítico
         for (i in presente) {
             print "[" data_hora "] === RAMAL FICOU OFFLINE OU FOI REMOVIDO ==="
             print "< " linha_antiga[i] "\n"
