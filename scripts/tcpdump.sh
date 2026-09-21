@@ -6,7 +6,8 @@
 LOG_DIR="/hd/log/icmp-test"
 TCPDUMP_DIR="${LOG_DIR}/tcpdump"
 WEB_DIR="/usr/share/mini-httpd/html/icmp-test"
-ROTATE_TIME=420
+ROTATE_TIME=420          # 420 segundos = 7 minutos
+RETENTION_FILES=206      # 206 arquivos * 7 min = ~24 horas de retenção por interface
 
 # ==========================================
 # 0. Identificação do Ambiente (Nuvem vs Física)
@@ -29,10 +30,14 @@ ENV_TYPE=$(detect_environment)
 echo "[+] Ambiente identificado: $ENV_TYPE"
 
 # ==========================================
-# 1. Preparação dos Diretórios
+# 1. Preparação dos Diretórios e Limpeza Prévia
 # ==========================================
 echo "[+] Criando diretório de logs..."
 mkdir -p "$TCPDUMP_DIR"
+
+# Apaga arquivos .pcap com mais de 24 horas (1440 min) para não acumular de execuções passadas
+echo "[+] Verificando e limpando capturas antigas (>24h)..."
+find "$TCPDUMP_DIR" -type f -name "*.pcap" -mmin +1440 -delete 2>/dev/null
 
 echo "[+] Configurando link simbólico para o servidor web..."
 if [ ! -d "$WEB_DIR" ]; then
@@ -65,10 +70,12 @@ if [ -z "$interface" ]; then
 fi
 
 # ==========================================
-# 3. Execução do TCPDump
+# 3. Execução do TCPDump com Retenção Ativa (24h)
 # ==========================================
-# Formato do datetime: AAAAMMDD-HHMMSS (%Y%m%d-%H%M%S)
-# O tcpdump expande as variáveis de tempo nativamente ao usar o parâmetro -G
+# Parâmetros:
+# -G 420  -> Rotaciona o arquivo a cada 7 minutos
+# -W 206  -> Mantém no máximo 206 arquivos por interface (206 * 7 min = ~24 horas)
+#            Quando chega a 206, apaga automaticamente o arquivo mais antigo.
 
 if [ "$interface" = "all" ]; then
     echo "[+] Você escolheu TODAS as interfaces."
@@ -78,13 +85,20 @@ if [ "$interface" = "all" ]; then
     
     for i in $interfaces; do
         if [ -n "$i" ]; then
-            echo "    -> Iniciando tcpdump na interface: $i ($ENV_TYPE)"
-            nohup tcpdump -n -i "$i" -w "${TCPDUMP_DIR}/log_${ENV_TYPE}_${i}_%Y%m%d-%H%M%S.pcap" -G $ROTATE_TIME > /dev/null 2>&1 &
+            echo "    -> Iniciando tcpdump na interface: $i ($ENV_TYPE) com retenção de 24h"
+            nohup tcpdump -n -i "$i" \
+                -w "${TCPDUMP_DIR}/log_${ENV_TYPE}_${i}_%Y%m%d-%H%M%S.pcap" \
+                -G $ROTATE_TIME \
+                -W $RETENTION_FILES > /dev/null 2>&1 &
         fi
     done
 else
-    echo "[+] Executando na interface: $interface ($ENV_TYPE)"
-    nohup tcpdump -n -i "$interface" -w "${TCPDUMP_DIR}/log_${ENV_TYPE}_${interface}_%Y%m%d-%H%M%S.pcap" -G $ROTATE_TIME > /dev/null 2>&1 &
+    echo "[+] Executando na interface: $interface ($ENV_TYPE) com retenção de 24h"
+    nohup tcpdump -n -i "$interface" \
+        -w "${TCPDUMP_DIR}/log_${ENV_TYPE}_${interface}_%Y%m%d-%H%M%S.pcap" \
+        -G $ROTATE_TIME \
+        -W $RETENTION_FILES > /dev/null 2>&1 &
 fi
 
 echo -e "\n[+] Captura(s) iniciada(s) em segundo plano com sucesso!"
+echo "[+] Retenção ativa: os arquivos mais antigos que 24h serão sobrescritos/removidos automaticamente."
