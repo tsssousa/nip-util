@@ -1,7 +1,18 @@
 #!/bin/bash
+
+# ==========================================
+# AUTO-NOHUP (Joga para background automaticamente)
+# ==========================================
+if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
+    export AUTO_NOHUP=1
+    nohup "$0" "$@" > /dev/null 2>&1 &
+    echo "Monitoramento iniciado em background com nohup (PID $!)."
+    echo "Acompanhe os logs em: /hd/log/icmp-test/monitor_Ip/"
+    exit 0
+fi
+
 # monitor_peers.sh - Monitoramento Inteligente de Peers SIP com Linha de Corte e Logs de 1h
 # Uso: ./monitor_peers.sh [intervalo_segundos] [opcao_modo_1_a_3]
-# Exemplo background: nohup ./monitor_peers.sh 5 2 > /dev/null 2>&1 &
 
 set -uo pipefail
 
@@ -45,11 +56,6 @@ atualizar_arquivo_log() {
 
 atualizar_arquivo_log
 
-echo "----------------------------------------------------------"
-echo "Monitorando peers SIP a cada ${INTERVALO}s... (Ctrl+C para parar)"
-echo "Logs de 1h salvos em: $DIR_LOG/"
-echo "---"
-
 get_peers() {
     asterisk -rx "sip show peers" | tail -n +2 | head -n -1 | tr -s ' '
 }
@@ -58,9 +64,8 @@ get_peers > "$ANTERIOR"
 TOTAL_PEERS=$(wc -l < "$ANTERIOR")
 MSG_INICIAL="[$(date '+%Y-%m-%d %H:%M:%S')] Monitoramento Iniciado Modo [$MODE] (${TOTAL_PEERS} peers)"
 
-echo "$MSG_INICIAL"
-echo "========================================" >> "$ARQUIVO_LOG"
 echo "$MSG_INICIAL" >> "$ARQUIVO_LOG"
+echo "========================================" >> "$ARQUIVO_LOG"
 
 while sleep "$INTERVALO"; do
     atualizar_arquivo_log
@@ -179,10 +184,7 @@ while sleep "$INTERVALO"; do
     }' "$ANTERIOR" "$ATUAL")
 
     if [ -n "$MUDANCAS" ]; then
-        echo -e "\r\033[K\n$MUDANCAS"
         echo "$MUDANCAS" >> "$ARQUIVO_LOG"
-    else
-        echo -ne "\r\033[K[$(date '+%H:%M:%S')] Monitorando no modo [$MODE]... Sem alterações críticas."
     fi
 
     cp "$ATUAL" "$ANTERIOR"
