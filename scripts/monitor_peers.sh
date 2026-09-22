@@ -50,8 +50,18 @@ case "$OPCAO" in
         ;;
 esac
 
+# ==========================================
+# GESTÃO DE LOGS E RETENÇÃO DE 24H
+# ==========================================
 atualizar_arquivo_log() {
-    ARQUIVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d_%Hh').txt"
+    NOVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d_%Hh').txt"
+    
+    # Se for a primeira execução ou se a hora mudou, atualiza a variável e faz a limpeza
+    if [ "${ARQUIVO_LOG:-}" != "$NOVO_LOG" ]; then
+        ARQUIVO_LOG="$NOVO_LOG"
+        # Limpa arquivos de log que tenham mais de 24 horas (1440 minutos)
+        find "$DIR_LOG" -type f -name "registro_*.txt" -mmin +1440 -delete 2>/dev/null
+    fi
 }
 
 atualizar_arquivo_log
