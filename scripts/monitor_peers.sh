@@ -1,12 +1,31 @@
 #!/bin/bash
 
 # ==========================================
-# AUTO-NOHUP (Joga para background automaticamente)
+# AUTO-NOHUP (Menu de Retenção e Background)
 # ==========================================
 if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
+    echo "=========================================="
+    echo " Escolha o tempo de retenção dos logs:"
+    echo " 1 - 24 horas"
+    echo " 2 - 36 horas"
+    echo " 3 - 48 horas"
+    echo " 4 - 7 dias"
+    echo "=========================================="
+    read -p "Digite a opção desejada (1-4) [Padrão: 4]: " OPCAO_RETENCAO
+
+    case "$OPCAO_RETENCAO" in
+        1) export MINUTOS_RETENCAO=1440 ;;  # 24h * 60m
+        2) export MINUTOS_RETENCAO=2160 ;;  # 36h * 60m
+        3) export MINUTOS_RETENCAO=2880 ;;  # 48h * 60m
+        4|"") export MINUTOS_RETENCAO=10080 ;; # 7d * 24h * 60m
+        *) echo "Opção inválida. Usando 7 dias por padrão."; export MINUTOS_RETENCAO=10080 ;;
+    esac
+
     export AUTO_NOHUP=1
     nohup "$0" "$@" > /dev/null 2>&1 &
-    echo "Monitoramento iniciado em background com nohup (PID $!)."
+    
+    echo -e "\nMonitoramento iniciado em background com nohup (PID $!)."
+    echo "Os logs serão mantidos por $(($MINUTOS_RETENCAO / 60)) horas."
     echo "Acompanhe os logs em: /hd/log/icmp-test/monitor_Ip/"
     exit 0
 fi
@@ -51,16 +70,19 @@ case "$OPCAO" in
 esac
 
 # ==========================================
-# GESTÃO DE LOGS E RETENÇÃO DE 24H
+# GESTÃO DE LOGS E RETENÇÃO DINÂMICA
 # ==========================================
 atualizar_arquivo_log() {
     NOVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d_%Hh').txt"
     
+    # Se a variável não estiver definida (por algum motivo), assume 7 dias (10080 min)
+    RETENCAO_ATUAL="${MINUTOS_RETENCAO:-10080}"
+    
     # Se for a primeira execução ou se a hora mudou, atualiza a variável e faz a limpeza
     if [ "${ARQUIVO_LOG:-}" != "$NOVO_LOG" ]; then
         ARQUIVO_LOG="$NOVO_LOG"
-        # Limpa arquivos de log que tenham mais de 24 horas (1440 minutos)
-        find "$DIR_LOG" -type f -name "registro_*.txt" -mmin +1440 -delete 2>/dev/null
+        # Limpa arquivos de log usando a escolha do usuário em minutos
+        find "$DIR_LOG" -type f -name "registro_*.txt" -mmin +"$RETENCAO_ATUAL" -delete 2>/dev/null
     fi
 }
 
