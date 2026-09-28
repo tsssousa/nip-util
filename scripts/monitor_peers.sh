@@ -30,7 +30,7 @@ if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
     exit 0
 fi
 
-# monitor_peers.sh - Monitoramento Inteligente de Peers SIP com Linha de Corte e Logs de 1h
+# monitor_peers.sh - Monitoramento Inteligente de Peers SIP com Linha de Corte e Logs Diários
 # Uso: ./monitor_peers.sh [intervalo_segundos] [opcao_modo_1_a_3]
 
 set -uo pipefail
@@ -73,12 +73,13 @@ esac
 # GESTÃO DE LOGS E RETENÇÃO DINÂMICA
 # ==========================================
 atualizar_arquivo_log() {
-    NOVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d_%Hh').txt"
+    # REMOVIDO o _%Hh para gerar apenas 1 arquivo por dia (ex: registro_2023-10-25.txt)
+    NOVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d').txt"
     
     # Se a variável não estiver definida (por algum motivo), assume 7 dias (10080 min)
     RETENCAO_ATUAL="${MINUTOS_RETENCAO:-10080}"
     
-    # Se for a primeira execução ou se a hora mudou, atualiza a variável e faz a limpeza
+    # Se for a primeira execução ou se o dia mudou, atualiza a variável e faz a limpeza
     if [ "${ARQUIVO_LOG:-}" != "$NOVO_LOG" ]; then
         ARQUIVO_LOG="$NOVO_LOG"
         # Limpa arquivos de log usando a escolha do usuário em minutos
