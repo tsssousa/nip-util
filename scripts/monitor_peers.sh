@@ -1,5 +1,22 @@
 #!/bin/bash
 
+PID_FILE="/tmp/monitor_peers.pid"
+
+# ==========================================
+# VERIFICAÇÃO DE INSTÂNCIA EM EXECUÇÃO
+# ==========================================
+if [ -f "$PID_FILE" ]; then
+    RUNNING_PID=$(cat "$PID_FILE")
+    # Verifica se o processo com esse PID realmente existe
+    if ps -p "$RUNNING_PID" > /dev/null 2>&1; then
+        echo "Atenção: O monitoramento já está rodando em background! (PID: $RUNNING_PID)"
+        exit 1
+    else
+        # Processo não existe (foi morto com kill -9, etc). Limpa o arquivo de PID obsoleto.
+        rm -f "$PID_FILE"
+    fi
+fi
+
 # ==========================================
 # AUTO-NOHUP (Menu de Retenção e Background)
 # ==========================================
@@ -24,7 +41,10 @@ if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
     export AUTO_NOHUP=1
     nohup "$0" "$@" > /dev/null 2>&1 &
     
-    echo -e "\nMonitoramento iniciado em background com nohup (PID $!)."
+    BG_PID=$!
+    echo "$BG_PID" > "$PID_FILE"
+    
+    echo -e "\nMonitoramento iniciado em background com nohup (PID $BG_PID)."
     echo "Os logs serão mantidos por $(($MINUTOS_RETENCAO / 60)) horas."
     echo "Acompanhe os logs em: /hd/log/icmp-test/monitor_Ip/"
     exit 0
@@ -45,7 +65,8 @@ ATUAL="$DIR_TMP/atual.txt"
 DIR_LOG="/hd/log/icmp-test/monitor_Ip"
 mkdir -p "$DIR_LOG"
 
-trap 'rm -rf "$DIR_TMP"; echo -e "\n\nMonitoramento encerrado."; exit 0' INT TERM
+# Atualizada a trap para remover o arquivo de PID ao ser encerrado
+trap 'rm -rf "$DIR_TMP"; rm -f "$PID_FILE"; echo -e "\n\nMonitoramento encerrado."; exit 0' INT TERM EXIT
 
 # ==========================================
 # DEFINIÇÃO DO MODO DE FILTRO
