@@ -3,24 +3,22 @@
 PID_FILE="/tmp/monitor_peers.pid"
 
 # ==========================================
-# VERIFICAÇÃO DE INSTÂNCIA EM EXECUÇÃO
-# ==========================================
-if [ -f "$PID_FILE" ]; then
-    RUNNING_PID=$(cat "$PID_FILE")
-    # Verifica se o processo com esse PID realmente existe
-    if ps -p "$RUNNING_PID" > /dev/null 2>&1; then
-        echo "Atenção: O monitoramento já está rodando em background! (PID: $RUNNING_PID)"
-        exit 1
-    else
-        # Processo não existe (foi morto com kill -9, etc). Limpa o arquivo de PID obsoleto.
-        rm -f "$PID_FILE"
-    fi
-fi
-
-# ==========================================
-# AUTO-NOHUP (Menu de Retenção e Background)
+# VERIFICAÇÃO E AUTO-NOHUP (Apenas Processo Principal)
 # ==========================================
 if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
+    
+    # 1. Verifica se já está rodando ANTES de exibir o menu
+    if [ -f "$PID_FILE" ]; then
+        RUNNING_PID=$(cat "$PID_FILE")
+        if ps -p "$RUNNING_PID" > /dev/null 2>&1; then
+            echo -e "\n[!] Atenção: O monitoramento já está rodando em background! (PID: $RUNNING_PID)\n"
+            exit 1
+        else
+            # Limpa PID fantasma de execução morta abruptamente
+            rm -f "$PID_FILE"
+        fi
+    fi
+
     echo "=========================================="
     echo " Escolha o tempo de retenção dos logs:"
     echo " 1 - 24 horas"
@@ -39,8 +37,11 @@ if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
     esac
 
     export AUTO_NOHUP=1
+    
+    # 2. Inicia em background
     nohup "$0" "$@" > /dev/null 2>&1 &
     
+    # 3. Salva o PID do processo em background
     BG_PID=$!
     echo "$BG_PID" > "$PID_FILE"
     
@@ -50,7 +51,9 @@ if [ "${AUTO_NOHUP:-0}" -eq 0 ]; then
     exit 0
 fi
 
-# monitor_peers.sh - Monitoramento Inteligente de Peers SIP com Linha de Corte e Logs Diários
+# ==========================================
+# CÓDIGO EM BACKGROUND (Daqui para baixo)
+# ==========================================
 # Uso: ./monitor_peers.sh [intervalo_segundos] [opcao_modo_1_a_3]
 
 set -uo pipefail
@@ -65,7 +68,7 @@ ATUAL="$DIR_TMP/atual.txt"
 DIR_LOG="/hd/log/icmp-test/monitor_Ip"
 mkdir -p "$DIR_LOG"
 
-# Atualizada a trap para remover o arquivo de PID ao ser encerrado
+# Garante que o arquivo PID seja deletado quando o monitoramento for parado
 trap 'rm -rf "$DIR_TMP"; rm -f "$PID_FILE"; echo -e "\n\nMonitoramento encerrado."; exit 0' INT TERM EXIT
 
 # ==========================================
@@ -74,19 +77,15 @@ trap 'rm -rf "$DIR_TMP"; rm -f "$PID_FILE"; echo -e "\n\nMonitoramento encerrado
 case "$OPCAO" in
     1|"CRITICO")
         MODE="CRITICO"
-        echo -e "-> Foco definido: Apenas Desconexões Reais."
         ;;
     2|"REDE")
         MODE="REDE"
-        echo -e "-> Foco definido: Desconexões e Alterações de IP/Porta."
         ;;
     3|"TUDO"|"HARDCORE")
         MODE="TUDO"
-        echo -e "-> Foco definido: Monitoramento Completo (Gera mais logs, tolerância de 20ms)."
         ;;
     *)
         MODE="CRITICO"
-        echo -e "-> Opção inválida recebida. Usando padrão: Apenas Desconexões Reais."
         ;;
 esac
 
@@ -94,16 +93,12 @@ esac
 # GESTÃO DE LOGS E RETENÇÃO DINÂMICA
 # ==========================================
 atualizar_arquivo_log() {
-    # REMOVIDO o _%Hh para gerar apenas 1 arquivo por dia (ex: registro_2023-10-25.txt)
     NOVO_LOG="$DIR_LOG/registro_$(date '+%Y-%m-%d').txt"
     
-    # Se a variável não estiver definida (por algum motivo), assume 7 dias (10080 min)
     RETENCAO_ATUAL="${MINUTOS_RETENCAO:-10080}"
     
-    # Se for a primeira execução ou se o dia mudou, atualiza a variável e faz a limpeza
     if [ "${ARQUIVO_LOG:-}" != "$NOVO_LOG" ]; then
         ARQUIVO_LOG="$NOVO_LOG"
-        # Limpa arquivos de log usando a escolha do usuário em minutos
         find "$DIR_LOG" -type f -name "registro_*.txt" -mmin +"$RETENCAO_ATUAL" -delete 2>/dev/null
     fi
 }
@@ -134,30 +129,24 @@ while sleep "$INTERVALO"; do
 
         n = split(linha, partes, " ")
         
-        # O nome do peer no Asterisk costuma ser o campo 1
         dados["peer"] = partes[1]
 
-        # 1. Extrai IP exato via Regex
         if (match(linha, /[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/)) {
             dados["ip"] = substr(linha, RSTART, RLENGTH)
         }
 
-        # 2. Extrai Status
         if (linha ~ / UNREACHABLE/) dados["status"] = "UNREACHABLE"
         else if (linha ~ / UNKNOWN/) dados["status"] = "UNKNOWN"
         else if (linha ~ / OK/) dados["status"] = "OK"
         else if (linha ~ / LAGGED/) dados["status"] = "LAGGED"
         else if (linha ~ / REJECTED/) dados["status"] = "REJECTED"
 
-        # 3. Extrai Latência Limpa
         if (match(linha, /\([0-9]+ ms\)/)) {
             substring = substr(linha, RSTART, RLENGTH)
             gsub(/[^0-9]/, "", substring)
             dados["ms"] = substring
         }
 
-        # 4. Extrai Porta (MUITO MAIS PRECISO)
-        # Na saída do Asterisk, a porta é sempre a coluna anterior ao Status
         for (i = 1; i <= n; i++) {
             if (partes[i] ~ /^(OK|UNREACHABLE|UNKNOWN|LAGGED|REJECTED)/) {
                 if (i > 1 && partes[i-1] ~ /^[0-9]+$/) {
@@ -191,13 +180,11 @@ while sleep "$INTERVALO"; do
             mudou = 0
             motivo = ""
 
-            # Critico: Mudança de Status
             if (status_ant[peer] != atu["status"]) {
                 motivo = motivo "    - Status alterado de [" status_ant[peer] "] para [" atu["status"] "]\n"
                 mudou = 1
             }
 
-            # Rede: IP ou Porta
             if (modo == "REDE" || modo == "TUDO") {
                 if (ip_ant[peer] != atu["ip"]) {
                     motivo = motivo "    - IP alterado de [" ip_ant[peer] "] para [" atu["ip"] "]\n"
@@ -209,12 +196,10 @@ while sleep "$INTERVALO"; do
                 }
             }
 
-            # Tudo: Variações bruscas de Latência
             if (modo == "TUDO") {
                 diff = atu["ms"] - ms_ant[peer]
                 if (diff < 0) diff = -diff
                 
-                # Tolerância de 20ms para evitar logs de oscilação normal (jitter)
                 if (diff >= 20 && status_ant[peer] == "OK" && atu["status"] == "OK") {
                     motivo = motivo "    - Latência variou drasticamente de [" ms_ant[peer] "ms] para [" atu["ms"] "ms]\n"
                     mudou = 1
