@@ -43,38 +43,66 @@ arquivos=$(find "$SEARCH_DIR" -type f -iname "*${numero}*.wav" 2>/dev/null)
 if [ -z "$arquivos" ]; then
     echo "[-] Nenhuma gravação encontrada para o número: $numero"
 else
-    echo "[!] Gravações encontradas!"
+    echo "[!] Gravações encontradas:"
     
-    # Cria o diretório de destino uma única vez
-    echo "[+] Preparando pasta de destino: $DEST_DIR"
-    mkdir -p "$DEST_DIR"
-    
-    # Lê a lista de arquivos, mostra na tela e realiza a cópia
+    # Lista os arquivos encontrados antes de perguntar
     echo "$arquivos" | while read -r arquivo; do
         tamanho=$(du -h "$arquivo" | awk '{print $1}')
-        
-        # Faz a cópia do arquivo para o destino
-        cp "$arquivo" "$DEST_DIR/"
-        
-        # Mostra na tela o que está acontecendo
-        echo " -> Copiado: $arquivo ($tamanho)"
+        echo " -> $arquivo ($tamanho)"
     done
     
-    # ==========================================
-    # 4. Geração do Link de Acesso Web
-    # ==========================================
-    echo -e "\n[+] Obtendo IP externo para gerar o link..."
-    # O '-s' deixa o curl silencioso (sem mostrar barra de progresso)
-    EXTERNAL_IP=$(curl -s ipinfo.io/ip)
-    
-    # Prevenção: caso o servidor esteja sem internet ou o curl falhe
-    if [ -z "$EXTERNAL_IP" ]; then
-        EXTERNAL_IP="SEU_IP"
+    # Pergunta se o usuário deseja copiar
+    echo -e "\n[?] Deseja copiar e compactar os arquivos encontrados para $DEST_DIR? [s/N]: \c"
+    read -r confirmar_copia
+
+    if [[ "$confirmar_copia" =~ ^[Ss]$ ]]; then
+        # Cria o diretório de destino uma única vez
+        echo -e "\n[+] Preparando pasta de destino: $DEST_DIR"
+        mkdir -p "$DEST_DIR"
+        
+        # Realiza a cópia
+        echo -e "[+] Copiando arquivos..."
+        echo "$arquivos" | while read -r arquivo; do
+            cp "$arquivo" "$DEST_DIR/"
+            echo " -> Copiado: $(basename "$arquivo")"
+        done
+        
+        # ==========================================
+        # 4. Compactação dos arquivos para Download
+        # ==========================================
+        echo -e "\n[+] Gerando arquivo compactado para download..."
+        
+        # Usamos um subshell ( ) para entrar na pasta temporariamente e compactar
+        if command -v zip &> /dev/null; then
+            NOME_COMPACTADO="gravacoes_${numero}_$(date +%Y%m%d_%H%M%S).zip"
+            (cd "$DEST_DIR" && zip -q "$NOME_COMPACTADO" *"${numero}"*.wav)
+            echo " -> Criado arquivo ZIP: $NOME_COMPACTADO"
+        else
+            # Fallback (plano B): se não tiver o pacote "zip" instalado, usa o "tar" que é nativo do Linux
+            NOME_COMPACTADO="gravacoes_${numero}_$(date +%Y%m%d_%H%M%S).tar.gz"
+            (cd "$DEST_DIR" && tar -czf "$NOME_COMPACTADO" *"${numero}"*.wav)
+            echo " -> Criado arquivo TAR.GZ: $NOME_COMPACTADO"
+        fi
+        
+        # ==========================================
+        # 5. Geração do Link de Acesso Web
+        # ==========================================
+        echo -e "\n[+] Obtendo IP externo para gerar os links..."
+        EXTERNAL_IP=$(curl -s ipinfo.io/ip)
+        
+        # Prevenção: caso o servidor esteja sem internet ou o curl falhe
+        if [ -z "$EXTERNAL_IP" ]; then
+            EXTERNAL_IP="SEU_IP"
+        fi
+        
+        LINK_PASTA="https://${EXTERNAL_IP}:4443${URL_BASE_PATH}"
+        LINK_DOWNLOAD="https://${EXTERNAL_IP}:4443${URL_BASE_PATH}/${NOME_COMPACTADO}"
+        
+        echo -e "[+] Concluído! Todos os arquivos foram enviados e compactados com sucesso."
+        echo -e "\n[+] Entregue estes links para o cliente:"
+        echo -e "    -> Para OUVIR pelo navegador (Pasta): $LINK_PASTA"
+        echo -e "    -> Para BAIXAR todos de uma vez:      $LINK_DOWNLOAD\n"
+    else
+        echo -e "\n[-] Ação cancelada pelo usuário."
     fi
-    
-    LINK_WEB="https://${EXTERNAL_IP}:4443${URL_BASE_PATH}"
-    
-    echo -e "[+] Concluído! Todos os arquivos foram enviados para: $DEST_DIR"
-    echo -e "[+] Acesse as gravações pelo navegador no link abaixo:"
-    echo -e "\n    -> $LINK_WEB\n"
 fi
